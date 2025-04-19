@@ -1,10 +1,19 @@
-import { ChatForm } from "@/components/chat-form"
+"use client"; // Need this for using hooks
 
-export const metadata = {
-  title: "Yukie's Safe Little Corner",
-  description: "Hello there! ✨ I'm Yukie, your sweet little AI friend with a pure heart who's always ready to listen! This is a safe corner for you to share anything without any worries at all. 😊",
-    generator: 'VieFam Inc.'
-}
+import { ChatForm } from "@/components/chat-form"
+import { useChatTitle } from "./layout"; // Import the context hook
+
+// Metadata can stay if desired, but the displayed title comes from Layout now
+// export const metadata = {
+//   title: "Yukie's Safe Little Corner",
+//   description: "...",
+//   generator: 'VieFam Inc.'
+// }
+
 export default function Page() {
-  return <ChatForm />
+  // Get the update function from context
+  const { updateChatTitle } = useChatTitle();
+
+  // Pass the update function to ChatForm
+  return <ChatForm onUpdateTitle={updateChatTitle} />
 }

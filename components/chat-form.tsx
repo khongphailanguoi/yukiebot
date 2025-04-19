@@ -1,7 +1,6 @@
-"use client"
+ "use client"
 
 import type React from "react"
-
 import { useState, useRef, useEffect } from "react"
 import { cn } from "@/lib/utils"
 import { ArrowUpIcon, AlertCircle } from "lucide-react"
@@ -9,19 +8,26 @@ import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip"
 import { AutoResizeTextarea } from "@/components/autoresize-textarea"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TypingEffect } from "@/components/typing-effect"
 
 type Message = {
   role: "user" | "assistant"
   content: string
 }
 
-export function ChatForm({ className, ...props }: React.ComponentProps<"form">) {
+interface ChatFormProps extends React.ComponentProps<"form"> {
+  onUpdateTitle?: (newTitle: string) => void;
+}
+
+export function ChatForm({ className, onUpdateTitle, ...props }: ChatFormProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const inputRef = useRef<HTMLTextAreaElement | null>(null)
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null)
+  const [titleUpdated, setTitleUpdated] = useState(false);
 
   const sendMessage = async (content: string) => {
     try {
@@ -32,16 +38,42 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
       const userMessage: Message = { role: "user", content }
       setMessages((prev) => [...prev, userMessage])
 
+      // Scroll immediately after user message is added
+      // Wait a tick for the DOM to update
+      setTimeout(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+        }
+      }, 0);
+
+      let assistantContent =  "The bot encountered an issue. Please try again.";
       // Send the message to the API
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: [...messages, userMessage],
-        }),
-      })
+      const isFirstMessage = messages.length === 1;
+      let response;
+
+      if (isFirstMessage) {
+        // Send the message to the API with a system instruction to summarize
+        response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messages: [{ role: "system", content: `Summarize the following message and derive a title for our chat, maximum 5 words: ${content}` }, userMessage],
+          }),
+        });
+      } else {
+        // Send the message to the API
+        response = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            messages: [...messages, userMessage],
+          }),
+        });
+      }
 
       if (!response.ok) {
         let errorData;
@@ -54,21 +86,31 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
       }
 
       const data = await response.json()
-      const assistantContent = data?.choices?.[0]?.message?.content || "The bot encountered an issue. Please try again.";
+      assistantContent = data?.choices?.[0]?.message?.content || assistantContent;
 
       const assistantMessage: Message = {
         role: "assistant",
         content: assistantContent,
       }
       setMessages((prev) => [...prev, assistantMessage])
+
+      // Update the title with the assistant's response
+      if (!titleUpdated && onUpdateTitle && isFirstMessage) {
+        onUpdateTitle(assistantContent);
+        setTitleUpdated(true);
+      }
     } catch (err) {
       console.error("Chat error:", err)
       setError(`Failed to get a response: ${err instanceof Error ? err.message : "Unknown error"}`)
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          content: `Error: ${err instanceof Error ? err.message : "Unknown error"}`,
+        },
+      ]);
     } finally {
       setIsLoading(false)
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
     }
   }
 
@@ -99,22 +141,24 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
   )
 
   useEffect(() => {
+    // Initial focus on mount
     if (inputRef.current) {
       inputRef.current.focus()
     }
   }, [])
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" })
+    // Re-focus input after bot finishes responding
+    if (!isLoading && inputRef.current) {
+      inputRef.current.focus();
     }
-  }, [messages])
+  }, [isLoading]);
 
+  // Message List Rendering
   const messageList = (
     <div
-      className="my-4 flex h-fit min-h-full flex-col gap-4"
-      ref={messagesEndRef}
-      style={{ overflowAnchor: "none" }}
+      className="my-4 flex flex-col gap-4"
+      style={{ overflowAnchor: "auto" }}
     >
       {messages.map((message, index) => (
         <div
@@ -122,19 +166,25 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
           data-role={message.role}
           className="max-w-[80%] rounded-xl px-3 py-2 text-sm data-[role=assistant]:self-start data-[role=user]:self-end data-[role=assistant]:bg-gray-100 data-[role=user]:bg-blue-500 data-[role=assistant]:text-black data-[role=user]:text-white"
         >
-          {message.content}
+          {/* Apply typing effect only to the last assistant message */}
+          {message.role === 'assistant' && index === messages.length - 1 ? (
+            <TypingEffect
+              text={message.content}
+              speed={30}
+              scrollContainerRef={scrollContainerRef}
+            />
+          ) : (
+            message.content
+          )}
         </div>
       ))}
+      {/* Loading indicator for chat response */}
       {isLoading && (
         <div className="max-w-[80%] self-start rounded-xl bg-gray-100 px-3 py-2 text-sm text-black">
           <div className="flex gap-1">
             <div className="animate-bounce">●</div>
-            <div className="animate-bounce" style={{ animationDelay: "0.2s" }}>
-              ●
-            </div>
-            <div className="animate-bounce" style={{ animationDelay: "0.4s" }}>
-              ●
-            </div>
+            <div className="animate-bounce" style={{ animationDelay: "0.2s" }}>●</div>
+            <div className="animate-bounce" style={{ animationDelay: "0.4s" }}>●</div>
           </div>
         </div>
       )}
@@ -149,7 +199,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
       )}
       {...props}
     >
-      <div className="flex-1 content-center overflow-y-auto px-6">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto px-6 pb-4">
       {error && (
           <Alert variant="destructive" className="mb-4">
             <AlertCircle className="h-4 w-4" />
@@ -161,7 +211,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
       </div>
       <form
         onSubmit={handleSubmit}
-        className="border-input bg-background focus-within:ring-ring/10 relative mx-auto mb-6 flex items-center justify-center rounded-[16px] border px-3 py-1.5 pr-8 text-sm focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0" style={{ width: '95% !important' }}
+        className="border-input bg-background focus-within:ring-ring/10 relative mx-auto mb-6 flex w-full max-w-4xl items-center justify-center rounded-[16px] border px-3 py-1.5 pr-8 text-sm focus-within:outline-none focus-within:ring-2 focus-within:ring-offset-0"
       >
         <AutoResizeTextarea
           onKeyDown={handleKeyDown}
@@ -169,7 +219,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
           value={input}
           placeholder="Enter a message"
           className="placeholder:text-muted-foreground flex-1 bg-transparent focus:outline-none"
-          disabled={isLoading}
+          disabled={isLoading} // Also disable input while generating title
           ref={inputRef}
         />
         <TooltipProvider>
@@ -179,7 +229,7 @@ export function ChatForm({ className, ...props }: React.ComponentProps<"form">) 
                 variant="ghost"
                 size="sm"
                 className="absolute bottom-1 right-1 size-6 rounded-full"
-                disabled={isLoading || !input.trim()}
+                disabled={isLoading || !input.trim()} // Also disable button
                 type="submit"
               >
                 <ArrowUpIcon size={16} />
