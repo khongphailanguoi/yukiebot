@@ -1,40 +1,46 @@
-import { GoogleGenerativeAI, Content } from "@google/generative-ai" // Ensure Content is imported
-import fs from 'fs';
+import { GoogleGenerativeAI, Content } from "@google/generative-ai"; // Ensure Content is imported
+// Remove fs import as it's no longer needed for config
+// import fs from 'fs';
+import configData from '../../../config.json'; // Import config.json directly
+
+// Define a type for the config structure for better type safety
+interface ChatConfig {
+  personality?: string;
+  manners?: string[];
+  rules?: string[];
+  basicTraining?: string;
+}
+
+// Assign the imported data, casting it to the defined type
+const config: ChatConfig = configData as ChatConfig;
 
 // Configure the Google Generative AI client
-const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "")
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || "");
 
 export async function POST(req: Request) {
   console.log("--- New Request to /api/chat ---");
   try {
-    const { messages } = await req.json()
+    const { messages } = await req.json();
     console.log("Received messages:", JSON.stringify(messages, null, 2));
 
     // Validate API key
     if (!process.env.GOOGLE_API_KEY) {
       console.error("GOOGLE_API_KEY is not configured");
-      return Response.json({ error: "GOOGLE_API_KEY is not configured" }, { status: 500 })
+      return Response.json({ error: "GOOGLE_API_KEY is not configured" }, { status: 500 });
     }
 
     // Format messages for Gemini (User/Model roles)
     const formattedMessages: Content[] = messages.map((msg: { role: string; content: string }) => ({
       role: msg.role === "user" ? "user" : "model",
       parts: [{ text: msg.content }],
-    }))
+    }));
     console.log("Formatted messages for Gemini:", JSON.stringify(formattedMessages, null, 2));
 
     // Get the model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" })
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
 
-    // Read configuration from config.json
-    let config: Partial<{ personality?: string; manners?: string[]; rules?: string[]; basicTraining?: string; }> = {};
-    try {
-      const configFile = fs.readFileSync('./config.json', 'utf-8');
-      config = JSON.parse(configFile);
-      console.log("Read config.json:", JSON.stringify(config, null, 2));
-    } catch (error) {
-      console.warn("Warning: Error reading or parsing config.json (continuing without config):", error instanceof Error ? error.message : String(error));
-    }
+    // Configuration is now directly available from the import
+    console.log("Using imported config:", JSON.stringify(config, null, 2));
 
     // Construct system instruction string from config
     let systemInstructionString = "";
@@ -53,17 +59,25 @@ export async function POST(req: Request) {
         console.error("Last message is missing or not from user:", lastMessage);
         return Response.json({ error: "Invalid last message format" }, { status: 400 });
     }
-    const lastMessageText = lastMessage.parts[0].text;
+
+    // Safely access the text
+    const lastMessageText = lastMessage.parts[0]?.text;
+
+    // Add a check to ensure lastMessageText is a string
+    if (typeof lastMessageText !== 'string') {
+        console.error("Error: Last message content is not a valid string:", lastMessageText);
+        return Response.json({ error: "Invalid last message content" }, { status: 400 });
+    }
+
+    // Now TypeScript knows lastMessageText is a string
     console.log("Last user message text:", lastMessageText);
     console.log("History being sent:", JSON.stringify(history, null, 2));
 
-    // *** MODIFICATION START ***
     // Format system instruction as Content object if it exists
     const systemInstructionContent: Content | undefined = finalSystemInstructionString
-        ? { role: "system", parts: [{ text: finalSystemInstructionString }] } // Use 'system' role? Or stick to 'model'? Let's try 'system' first as it's semantically correct. The API might alias it. If this fails, try 'model'.
+        ? { role: "system", parts: [{ text: finalSystemInstructionString }] }
         : undefined;
     console.log("System Instruction Content Object:", JSON.stringify(systemInstructionContent, null, 2) || "None");
-    // *** MODIFICATION END ***
 
 
     // Start a chat session
@@ -80,6 +94,7 @@ export async function POST(req: Request) {
 
     // Send the message to Gemini and get the response
     console.log("Sending message to Gemini...");
+    // lastMessageText is guaranteed to be a string here
     const result = await chat.sendMessage(lastMessageText);
     console.log("Received result from Gemini:", JSON.stringify(result, null, 2));
 
@@ -92,7 +107,7 @@ export async function POST(req: Request) {
       id: Date.now().toString(),
       object: "chat.completion",
       created: Date.now(),
-      model: "gemini-1.5-flash",
+      model: "gemini-2.0-flash",
       choices: [
         {
           index: 0,
@@ -121,6 +136,6 @@ export async function POST(req: Request) {
       error: "Failed to process chat request",
       details: error instanceof Error ? error.message : String(error),
       errorName: error instanceof Error ? error.name : undefined,
-    }, { status: 500 })
+    }, { status: 500 });
   }
 }
